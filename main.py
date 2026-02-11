@@ -9,7 +9,7 @@ app = Flask(__name__)
 # O script tenta ler do Coolify. Se não encontrar, usa o valor fixo.
 USERNAME = os.getenv("BMG_USER", "dbasilio")
 PASSWORD = os.getenv("BMG_PASS", "20032025") 
-ID_PONTO_ENTREGA_ESTATICO = 6909
+ID_PONTO_ENTREGA_ESTATICO = 12943
 BASE_URL = "https://apicotizadorespanya.bibliomanager.com"
 
 # ================= 📚 DICIONÁRIO DE TRADUÇÃO =================
