@@ -6,59 +6,49 @@ import os
 app = Flask(__name__)
 
 # ================= 🔐 CREDENCIAIS =================
-# O script tenta ler do Coolify. Se não encontrar, usa o valor fixo.
 USERNAME = os.getenv("BMG_USER", "dbasilio")
 PASSWORD = os.getenv("BMG_PASS", "20032025") 
 ID_PONTO_ENTREGA_ESTATICO = 12943
 BASE_URL = "https://apicotizadorespanya.bibliomanager.com"
 
 # ================= 📚 DICIONÁRIO DE TRADUÇÃO =================
-# Mapeia os nomes que vêm do n8n/Lovable para os IDs da API
 MATERIAIS = {
-    "encadernacao": {
-        "Capa Mole": 45,  
-        "Tapa Blanda": 45
-    },
-    "laminado": {
-        "Mate": 47,
-        "Brilho": 48,
-        "Sem Laminar": 1118,
-        "Antirisco": 949,
-        "Soft Touch": 948
-    },
-    "papel_miolo": {
-        "Ahuesado 80 gr": 141,
-        "Ahuesado 90 gr": 142,
-        "Estucado Mate 115 gr": 149,
-        "Offset 80 gr": 160,
-        "Offset 90 gr": 161,
-        "Offset 100 gr": 382,
-        "Reciclado 90 gr": 1251
-    },
-    "papel_capa": {
-        "Cartolina Gráfica 240 gr": 35,
-        "Cartolina Gráfica 260 gr": 83,
-        "Estucado Mate 300 gr": 50,
-        "Verjurado Branco 300 gr": 1145,
-        "Reciclado 300 gr": 1143
-    }
+    "encadernacao": { "Capa Mole": 45, "Tapa Blanda": 45 },
+    "laminado": { "Mate": 47, "Brilho": 48, "Sem Laminar": 1118, "Antirisco": 949, "Soft Touch": 948 },
+    "papel_miolo": { "Ahuesado 80 gr": 141, "Ahuesado 90 gr": 142, "Estucado Mate 115 gr": 149, "Offset 80 gr": 160, "Offset 90 gr": 161, "Offset 100 gr": 382, "Reciclado 90 gr": 1251 },
+    "papel_capa": { "Cartolina Gráfica 240 gr": 35, "Cartolina Gráfica 260 gr": 83, "Estucado Mate 300 gr": 50, "Verjurado Branco 300 gr": 1145, "Reciclado 300 gr": 1143 }
 }
 
-# Configuração Padrão
+# ⭐️ MUDANÇA 1: Adicionei largura (ancho) e altura (alto) aos padrões
 DEFAULT_SPECS = {
     "coleccion": 11, "sangre": 13, "encuadernado": 45, "tinta": 29, 
     "papel_miolo": 161, "contiene_imagenes": 7, "tipo_trabalho_web": 853, 
-    "impresion_tapa": 22, "tipo_tapa": 162, "papel_capa": 50, 
-    "laminado": 47, "solapa": 9
+    "impresion_tapa": 22, "tipo_tapa": 162, "papel_capa": 50, "laminado": 47, "solapa": 9,
+    "ancho": 150, # Largura padrão em mm
+    "alto": 230   # Altura padrão em mm
 }
 
-# ================= ⚙️ LÓGICA TÉCNICA =================
+# ================= 🛠️ HELPER PARA PEDIDOS SEGUROS =================
+def safe_request(method, url, **kwargs):
+    try:
+        response = requests.request(method, url, **kwargs)
+        response.raise_for_status()
+        try:
+            return response.json()
+        except json.JSONDecodeError:
+            raise Exception(f"A API não devolveu JSON. Resposta: {response.text[:200]}")
+    except requests.exceptions.HTTPError as e:
+        raise Exception(f"Erro HTTP {e.response.status_code} em {url}: {e.response.text[:200]}")
+    except Exception as e:
+        raise e
+
+# ================= ⚙️ LÓGICA DO ORÇAMENTO =================
 
 def obter_token_de_sessao(username, password):
     try:
-        url_acesso = f"{BASE_URL}/Acceso"
+        url = f"{BASE_URL}/Acceso"
         headers = {"User-Agent": "My-API-Client/1.0", "Origin": "https://editores.bibliomanager.com"}
-        response = requests.get(url_acesso, auth=(username, password), headers=headers)
+        response = requests.get(url, auth=(username, password), headers=headers)
         response.raise_for_status()
         return response.text
     except Exception as e:
@@ -70,44 +60,40 @@ def calcular_orcamento(token, quantidade, paginas, specs, id_morada):
     headers_com_dados = {**headers, "Content-Type": "text/plain;charset=UTF-8"}
     
     try:
-        # 1. CRIAR COTAÇÃO
-        url_guardar = f"{BASE_URL}/POD/guardarCotizacion"
+        # ⭐️ MUDANÇA 2: Usar specs['ancho'] e specs['alto'] em vez de números fixos
         payload_producao = { 
             "informacion": { "titulo": f"Auto {quantidade}ex", "cantidad": quantidade, "coleccion": specs["coleccion"], "isbn": "", "sku": 0, "nombreColeccion": "", "editorial": 0, "referenciaCliente": "AUTO-API" }, 
-            "formato": { "ancho": 150, "alto": 230, "sangre": specs["sangre"] }, 
+            "formato": { "ancho": specs["ancho"], "alto": specs["alto"], "sangre": specs["sangre"] }, 
             "acabado": { "encuadernado": specs["encuadernado"] }, 
             "interior": { "tinta": specs["tinta"], "paginas": { "paginasColor": 0, "paginasBN": paginas }, "papelBn": specs["papel_miolo"], "papelColor": 0, "contieneImagenes": specs["contiene_imagenes"], "tipoTrabajoWeb": specs["tipo_trabalho_web"] }, 
             "cubierta": { "impresionTapa": specs["impresion_tapa"], "tipoTapa": specs["tipo_tapa"], "tipoPapel": specs["papel_capa"], "laminado": specs["laminado"], "solapa": {"solapa": specs["solapa"]}, "papelSobrecubierta": 0, "laminadoSobrecubierta": 0 }, 
             "tapadura": {}, "inserciones": {}, "adicionales": {}, "observaciones": "", "idNegocio": 1, "idFilialProduccion": 1 
         }
         
-        res = requests.post(url_guardar, data=json.dumps(payload_producao), headers=headers_com_dados)
-        res.raise_for_status()
-        id_cotacao = res.json()["oResultado"]["idTrabajoRelacion"]
+        data_cot = safe_request('POST', f"{BASE_URL}/POD/guardarCotizacion", data=json.dumps(payload_producao), headers=headers_com_dados)
+        id_cotacao = data_cot["oResultado"]["idTrabajoRelacion"]
 
-        # 2. AQUECIMENTO
-        requests.get(f"{BASE_URL}/POD/dameCotizacion?idCotizacionCabecera={id_cotacao}&idFilialProduccion=1", headers=headers)
-        requests.get(f"{BASE_URL}/Utilidades/validarPuntoEntrega?idPuntoEntrega={id_morada}&idFilialProduccion=1", headers=headers)
+        # Aquecimento
+        safe_request('GET', f"{BASE_URL}/POD/dameCotizacion?idCotizacionCabecera={id_cotacao}&idFilialProduccion=1", headers=headers)
+        safe_request('GET', f"{BASE_URL}/Utilidades/validarPuntoEntrega?idPuntoEntrega={id_morada}&idFilialProduccion=1", headers=headers)
 
-        # 3. OPÇÕES DE ENVIO
-        url_opt_envio = f"{BASE_URL}/POD/distribucionEnvio"
+        # Opções Envio
         payload_opt = {"id_dir": id_morada, "id_cotizacion": id_cotacao, "und": quantidade, "termoempaque": 15, "undTermoempaque": 0, "idFilialProduccion": "1"}
-        res_opt = requests.post(url_opt_envio, data=json.dumps(payload_opt), headers=headers_com_dados)
+        data_opt = safe_request('POST', f"{BASE_URL}/POD/distribucionEnvio", data=json.dumps(payload_opt), headers=headers_com_dados)
         
-        # Pega a primeira opção
-        id_dist_envio = res_opt.json()["oResultado"][0]["gastos"][0]["id_distribucion_envio"]
+        if not data_opt.get("oResultado") or len(data_opt["oResultado"]) == 0:
+             raise Exception("A API não devolveu opções de envio.")
+        id_dist_envio = data_opt["oResultado"][0]["gastos"][0]["id_distribucion_envio"]
 
-        # 4. CONFIRMAR ENVIO (ID Dinâmico)
-        url_conf = f"{BASE_URL}/POD/confirmaDistribucionEnvio"
+        # Confirmar Envio
         payload_conf = {"id_distribucion_envio": id_dist_envio, "idFilialProduccion": "1"}
-        res_conf = requests.patch(url_conf, data=json.dumps(payload_conf), headers=headers_com_dados)
-        id_dinamico = res_conf.json()["oResultado"]["id_diccionario_punto_entrega"]
+        data_conf = safe_request('PATCH', f"{BASE_URL}/POD/confirmaDistribucionEnvio", data=json.dumps(payload_conf), headers=headers_com_dados)
+        id_dinamico = data_conf["oResultado"]["id_diccionario_punto_entrega"]
 
-        # 5. TOTAL FINAL
-        url_total = f"{BASE_URL}/POD/dameTotalIva"
+        # Total Final
         payload_total = {"id_cotizacion_cabecera": id_cotacao, "numTrab": 1, "puntosEntrega": [{"id_diccionario_punto_entrega": id_dinamico}], "idFilialProduccion": "1"}
-        res_total = requests.post(url_total, data=json.dumps(payload_total), headers=headers_com_dados)
-        data = res_total.json()["oResultado"]
+        data_total = safe_request('POST', f"{BASE_URL}/POD/dameTotalIva", data=json.dumps(payload_total), headers=headers_com_dados)
+        data = data_total["oResultado"]
 
         preco_unit = float(data["precios_unitarios"][0]["precio_unidad"])
         total_prod = preco_unit * quantidade
@@ -120,6 +106,7 @@ def calcular_orcamento(token, quantidade, paginas, specs, id_morada):
             "dados": {
                 "qtd": quantidade,
                 "paginas": paginas,
+                "formato": f"{specs['ancho']}x{specs['alto']}mm", # Adicionei info do formato na resposta
                 "producao": round(total_prod, 2),
                 "envio": round(envio, 2),
                 "iva": round(iva, 2),
@@ -139,40 +126,42 @@ def endpoint_orcamento():
     paginas = data.get('paginas')
     
     if not quantidade or not paginas:
-        return jsonify({"error": "Faltam dados obrigatórios (quantidade, paginas)"}), 400
+        return jsonify({"error": "Faltam dados (quantidade, paginas)"}), 400
 
-    # Configurar specs com base nos nomes enviados
     specs = DEFAULT_SPECS.copy()
     
-    mapeamentos = [
-        ('papel_miolo', 'papel_miolo'),
-        ('papel_capa', 'papel_capa'),
-        ('laminado', 'laminado'),
-        ('encadernacao', 'encadernado') # Nome no JSON -> Nome no dicionário
-    ]
-
-    for campo_json, campo_specs in mapeamentos:
-        if campo_json in data:
-            nome = data[campo_json]
-            # Procura no dicionário MATERIAIS
-            categoria = 'encadernacao' if campo_json == 'encadernacao' else campo_json
+    # ⭐️ MUDANÇA 3: Ler largura e altura do JSON (se existirem)
+    if 'largura' in data:
+        try:
+            specs['ancho'] = int(data['largura'])
+        except:
+            return jsonify({"error": "Largura tem de ser um número inteiro (mm)"}), 400
             
-            if nome in MATERIAIS[categoria]:
-                specs[campo_specs] = MATERIAIS[categoria][nome]
-            else:
-                return jsonify({"error": f"Material desconhecido: '{nome}' em '{campo_json}'. Opções: {list(MATERIAIS[categoria].keys())}"}), 400
+    if 'altura' in data:
+        try:
+            specs['alto'] = int(data['altura'])
+        except:
+            return jsonify({"error": "Altura tem de ser um número inteiro (mm)"}), 400
 
-    # Executar
+    # Mapeamento materiais
+    mapeamentos = [('papel_miolo', 'papel_miolo'), ('papel_capa', 'papel_capa'), ('laminado', 'laminado'), ('encadernacao', 'encadernado')]
+    for json_key, dict_key in mapeamentos:
+        if json_key in data:
+            nome = data[json_key]
+            cat = 'encadernacao' if json_key == 'encadernacao' else json_key
+            if nome in MATERIAIS[cat]:
+                specs[dict_key] = MATERIAIS[cat][nome]
+            else:
+                return jsonify({"error": f"Material inválido: '{nome}' em '{json_key}'"}), 400
+
     token = obter_token_de_sessao(USERNAME, PASSWORD)
     if not token:
         return jsonify({"error": "Falha login gráfica"}), 500
 
     resultado = calcular_orcamento(token, quantidade, paginas, specs, ID_PONTO_ENTREGA_ESTATICO)
     
-    if resultado["success"]:
-        return jsonify(resultado)
-    else:
-        return jsonify(resultado), 500
+    status_code = 200 if resultado["success"] else 500
+    return jsonify(resultado), status_code
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8000)
